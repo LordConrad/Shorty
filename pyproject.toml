@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-slicer"
+version = "1.0.0"
+description = "A fast ad-free utility for cutting and slicing video files utilizing PySide6 and FFmpeg"
+readme = "README.md"
+authors = [
+    { name = "Conrad", email = "conrad@example.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "PySide6>=6.5.0",
+]
+
+[project.scripts]
+video-slicer = "main:main"
+
+[tool.hatch.build.targets.winapp]
+# Optional target for tools interpreting winapps
