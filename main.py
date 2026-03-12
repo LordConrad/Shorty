@@ -36,6 +36,7 @@ def load_qt_modules():
 		"QThread": core.QThread,
 		"QAction": gui.QAction,
 		"QColor": gui.QColor,
+		"QIcon": gui.QIcon,
 		"QImage": gui.QImage,
 		"QPixmap": gui.QPixmap,
 		"QPainter": gui.QPainter,
@@ -76,6 +77,7 @@ QTimer = qt["QTimer"]
 QThread = qt["QThread"]
 QAction = qt["QAction"]
 QColor = qt["QColor"]
+QIcon = qt["QIcon"]
 QImage = qt["QImage"]
 QPixmap = qt["QPixmap"]
 QPainter = qt["QPainter"]
@@ -160,19 +162,73 @@ class TimelineWidget(QWidget):
 		self.slice_mode = "pieces"  # "pieces" or "time"
 		self.pieces = 4
 		self.segment_seconds = 30
+		self.custom_mode = False
+		self.custom_lengths = []
 		self.hover_index = -1
+
+	def get_default_seg_s(self) -> float:
+		if self.slice_mode == "pieces" and self.pieces > 0:
+			return self.video_duration_seconds / self.pieces
+		elif self.slice_mode == "time" and self.segment_seconds > 0:
+			return self.segment_seconds
+		return 0
+
+	def generate_default_lengths(self) -> None:
+		if self.video_duration_seconds <= 0:
+			self.custom_lengths = []
+			return
+		seg_s = self.get_default_seg_s()
+		if seg_s <= 0:
+			self.custom_lengths = [self.video_duration_seconds]
+			return
+			
+		lengths = []
+		if self.slice_mode == "pieces" and self.pieces > 0:
+			for _ in range(self.pieces):
+				lengths.append(seg_s)
+		else:
+			duration = self.video_duration_seconds
+			while duration > 0.1:
+				lengths.append(min(seg_s, duration))
+				duration -= seg_s
+		self.custom_lengths = lengths
+
+	def get_active_index(self) -> int:
+		if self.video_duration_seconds <= 0:
+			return -1
+		
+		# Add ~300ms tolerance
+		pos = self.current_position_seconds + 0.3
+		
+		if self.custom_mode and self.custom_lengths:
+			current_start = 0
+			for i, length in enumerate(self.custom_lengths):
+				if pos >= current_start and pos < current_start + length:
+					return i
+				current_start += length
+			return len(self.custom_lengths) - 1 if self.custom_lengths else -1
+		else:
+			seg_s = self.get_default_seg_s()
+			if seg_s > 0:
+				return int(pos / seg_s)
+			return 0
 
 	def get_segment_index(self, x: float) -> int:
 		if self.video_duration_seconds <= 0: return -1
 		width = self.width()
-		seg_s = 0
-		if self.slice_mode == "pieces" and self.pieces > 0:
-			seg_s = self.video_duration_seconds / self.pieces
-		elif self.slice_mode == "time" and self.segment_seconds > 0:
-			seg_s = self.segment_seconds
-		if seg_s > 0:
-			click_time_s = (x / width) * self.video_duration_seconds
-			return int(click_time_s / seg_s)
+		click_time_s = (x / width) * self.video_duration_seconds
+		
+		if self.custom_mode and self.custom_lengths:
+			current_start = 0
+			for i, length in enumerate(self.custom_lengths):
+				if click_time_s >= current_start and click_time_s <= current_start + length:
+					return i
+				current_start += length
+			return -1
+		else:
+			seg_s = self.get_default_seg_s()
+			if seg_s > 0:
+				return int(click_time_s / seg_s)
 		return -1
 
 	def mouseMoveEvent(self, event) -> None:
@@ -198,63 +254,86 @@ class TimelineWidget(QWidget):
 		painter.setPen(Qt.PenStyle.NoPen)
 		painter.drawRoundedRect(track_rect, 4, 4)
 
-		# Pokud není načteno žádné video, skončíme jen u prázdného pozadí (1 velký neaktivní slice)
+		# If no video is loaded, we just end up with an empty background (1 large inactive slice)
 		if self.video_duration_seconds <= 0:
 			return
 
-		# Get segment length
-		seg_s = 0
-		if self.slice_mode == "pieces" and self.pieces > 0:
-			seg_s = self.video_duration_seconds / self.pieces
-		elif self.slice_mode == "time" and self.segment_seconds > 0:
-			seg_s = self.segment_seconds
-
-		# Hover highlight
-		if self.video_duration_seconds > 0 and seg_s > 0 and self.hover_index >= 0:
-			start_x = (self.hover_index * seg_s / self.video_duration_seconds) * width
-			end_x = ((self.hover_index + 1) * seg_s / self.video_duration_seconds) * width
-			if end_x > width:
-				end_x = width
-			hover_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
-			painter.setBrush(QColor(255, 255, 255, 60))  # Semi-transparent white
-			painter.setPen(Qt.PenStyle.NoPen)
-			painter.drawRoundedRect(hover_rect, 4, 4)
-
-		# Highlight active segment
-		if self.video_duration_seconds > 0 and seg_s > 0:
-			# Přidáme 300ms (0.3s) toleranci, protože videopřehrávač často skočí 
-			# na klíčový snímek lehce před začátkem požadovaného času (např. 29.95s místo 30.0s)
-			active_index = int((self.current_position_seconds + 0.3) / seg_s)
-			
-			start_x = (active_index * seg_s / self.video_duration_seconds) * width
-			end_x = ((active_index + 1) * seg_s / self.video_duration_seconds) * width
-			
-			if end_x > width:
-				end_x = width
+		if self.custom_mode and self.custom_lengths:
+			current_start = 0
+			for i, length in enumerate(self.custom_lengths):
+				start_x = (current_start / self.video_duration_seconds) * width
+				end_x = ((current_start + length) / self.video_duration_seconds) * width
+				if start_x > width: start_x = width
+				if end_x > width: end_x = width
 				
-			active_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
-			painter.setBrush(Qt.BrushStyle.NoBrush)
-			painter.setPen(QPen(QColor(0, 255, 0), 4))
-			painter.drawRoundedRect(active_rect, 4, 4)
+				# Hover highlight
+				if i == self.hover_index:
+					hover_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
+					painter.setBrush(QColor(255, 255, 255, 60))
+					painter.setPen(Qt.PenStyle.NoPen)
+					painter.drawRoundedRect(hover_rect, 4, 4)
+				
+				# Active highlight
+				active_index = self.get_active_index()
+				if i == active_index:
+					active_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
+					painter.setBrush(Qt.BrushStyle.NoBrush)
+					painter.setPen(QPen(QColor(0, 255, 0), 4))
+					painter.drawRoundedRect(active_rect, 4, 4)
+				
+				# Draw separator
+				if i > 0:
+					painter.setPen(QPen(QColor(255, 100, 100), 2))
+					painter.drawLine(QPointF(start_x, 10), QPointF(start_x, height - 10))
 
-		# Draw slice separators
-		painter.setPen(QPen(QColor(255, 100, 100), 2))
+				current_start += length
+		else:
+			# Get segment length
+			seg_s = self.get_default_seg_s()
 
-		if self.slice_mode == "pieces" and self.pieces > 0:
-			segment_width = width / self.pieces
-			for i in range(1, self.pieces):
-				x = i * segment_width
-				painter.drawLine(QPointF(x, 10), QPointF(x, height - 10))
+			# Hover highlight
+			if self.video_duration_seconds > 0 and seg_s > 0 and self.hover_index >= 0:
+				start_x = (self.hover_index * seg_s / self.video_duration_seconds) * width
+				end_x = ((self.hover_index + 1) * seg_s / self.video_duration_seconds) * width
+				if end_x > width:
+					end_x = width
+				hover_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
+				painter.setBrush(QColor(255, 255, 255, 60))  # Semi-transparent white
+				painter.setPen(Qt.PenStyle.NoPen)
+				painter.drawRoundedRect(hover_rect, 4, 4)
 
-		elif self.slice_mode == "time" and self.segment_seconds > 0:
-			num_segments = self.video_duration_seconds / self.segment_seconds
-			if num_segments > 1:
-				for i in range(1, int(num_segments)):
-					x = (i * self.segment_seconds / self.video_duration_seconds) * width
+			# Highlight active segment
+			if self.video_duration_seconds > 0 and seg_s > 0:
+				active_index = self.get_active_index()
+				start_x = (active_index * seg_s / self.video_duration_seconds) * width
+				end_x = ((active_index + 1) * seg_s / self.video_duration_seconds) * width
+				
+				if end_x > width:
+					end_x = width
+					
+				active_rect = QRectF(start_x, 10, end_x - start_x, height - 20)
+				painter.setBrush(Qt.BrushStyle.NoBrush)
+				painter.setPen(QPen(QColor(0, 255, 0), 4))
+				painter.drawRoundedRect(active_rect, 4, 4)
+
+			# Draw slice separators
+			painter.setPen(QPen(QColor(255, 100, 100), 2))
+
+			if self.slice_mode == "pieces" and self.pieces > 0:
+				segment_width = width / self.pieces
+				for i in range(1, self.pieces):
+					x = i * segment_width
 					painter.drawLine(QPointF(x, 10), QPointF(x, height - 10))
-				if num_segments > int(num_segments):
-					x = (int(num_segments) * self.segment_seconds / self.video_duration_seconds) * width
-					painter.drawLine(QPointF(x, 10), QPointF(x, height - 10))
+
+			elif self.slice_mode == "time" and self.segment_seconds > 0:
+				num_segments = self.video_duration_seconds / self.segment_seconds
+				if num_segments > 1:
+					for i in range(1, int(num_segments)):
+						x = (i * self.segment_seconds / self.video_duration_seconds) * width
+						painter.drawLine(QPointF(x, 10), QPointF(x, height - 10))
+					if num_segments > int(num_segments):
+						x = (int(num_segments) * self.segment_seconds / self.video_duration_seconds) * width
+						painter.drawLine(QPointF(x, 10), QPointF(x, height - 10))
 
 	def mousePressEvent(self, event) -> None:
 		if self.video_duration_seconds <= 0:
@@ -264,15 +343,14 @@ class TimelineWidget(QWidget):
 		idx = self.get_segment_index(x)
 		
 		if idx >= 0:
-			seg_s = 0
-			if self.slice_mode == "pieces" and self.pieces > 0:
-				seg_s = self.video_duration_seconds / self.pieces
-			elif self.slice_mode == "time" and self.segment_seconds > 0:
-				seg_s = self.segment_seconds
-				
-			if seg_s > 0:
-				start_time_ms = int(idx * seg_s * 1000)
-				self.segment_clicked.emit(start_time_ms)
+			if self.custom_mode and self.custom_lengths:
+				start_time_s = sum(self.custom_lengths[:idx])
+				self.segment_clicked.emit(int(start_time_s * 1000))
+			else:
+				seg_s = self.get_default_seg_s()
+				if seg_s > 0:
+					start_time_ms = int(idx * seg_s * 1000)
+					self.segment_clicked.emit(start_time_ms)
 
 class ExportWorker(QThread):
 	progress_val = Signal(int)
@@ -296,14 +374,14 @@ class ExportWorker(QThread):
 			ext_part = orig_ext if orig_ext else ".mp4"
 
 		for i, (start_s, duration_s, index) in enumerate(self.timestamps):
-			# Vydá signál před začátkem práce na aktuálním videu
+			# Emit signal before starting work on current video
 			self.progress_val.emit(i)
-			self.progress_text.emit(f"Zpracování videa {i + 1} z {total}...")
+			self.progress_text.emit(f"Processing video {i + 1} of {total}...")
 			
 			out_name = f"{name_part}_{index}{ext_part}"
 			out_path = os.path.join(base_dir, out_name)
 
-			# Používáme rychlé bezztrátové stříhání přes parametr -c copy
+			# We use fast lossless cutting via -c copy parameter
 			cmd = [
 				"ffmpeg",
 				"-y",
@@ -318,15 +396,15 @@ class ExportWorker(QThread):
 				subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 			except subprocess.CalledProcessError as e:
 				err_msg = e.stderr.decode('utf-8', errors='ignore')
-				self.finished_export.emit(False, f"Chyba při exportu části {index}:\n{err_msg}")
+				self.finished_export.emit(False, f"Error exporting part {index}:\n{err_msg}")
 				return
 			except FileNotFoundError:
-				self.finished_export.emit(False, "Program 'ffmpeg' nebyl nalezen. Nainstalujte jej prosím (např. sudo pacman -S ffmpeg).")
+				self.finished_export.emit(False, "Program 'ffmpeg' not found. Please install it (e.g. sudo apt install ffmpeg).")
 				return
 				
 		self.progress_val.emit(total)
-		self.progress_text.emit(f"Hotovo! Bylo exportováno {total} úseků.")
-		self.finished_export.emit(True, "Všechna videa byla úspěšně vyexportována.")
+		self.progress_text.emit(f"Done! Exported {total} segments.")
+		self.finished_export.emit(True, "All videos successfully exported.")
 
 class MainWindow(QMainWindow):
 	def __init__(self) -> None:
@@ -367,6 +445,22 @@ class MainWindow(QMainWindow):
 		playback_layout.addStretch(1)
 		
 		layout.addLayout(playback_layout)
+
+		custom_layout = QHBoxLayout()
+		custom_layout.addStretch(1)
+		self.custom_length_checkbox = QCheckBox("Set each part separately")
+		custom_layout.addWidget(self.custom_length_checkbox)
+		custom_layout.addWidget(QLabel("Selected length: "))
+		self.custom_length_input = QTimeEdit()
+		self.custom_length_input.setDisplayFormat("HH:mm:ss")
+		self.custom_length_input.setEnabled(False)
+		custom_layout.addWidget(self.custom_length_input)
+		self.btn_set_default = QPushButton("Set default")
+		self.btn_set_default.setEnabled(False)
+		custom_layout.addWidget(self.btn_set_default)
+		custom_layout.addStretch(1)
+
+		layout.addLayout(custom_layout)
 
 		self.timeline = TimelineWidget()
 		layout.addWidget(self.timeline)
@@ -429,6 +523,10 @@ class MainWindow(QMainWindow):
 		self.pieces_input.valueChanged.connect(self.update_timeline)
 		self.segment_time_input.timeChanged.connect(self.update_timeline)
 		self.slice_mode_switch.toggled.connect(self.update_timeline)
+		
+		self.custom_length_checkbox.toggled.connect(self.on_custom_mode_toggled)
+		self.custom_length_input.timeChanged.connect(self.on_custom_time_changed)
+		self.btn_set_default.clicked.connect(self.on_set_default_clicked)
 
 		self.player.durationChanged.connect(self.on_duration_changed)
 		self.player.playbackStateChanged.connect(self.on_playback_state_changed)
@@ -448,10 +546,71 @@ class MainWindow(QMainWindow):
 	def on_position_changed(self, position_ms: int) -> None:
 		self.timeline.current_position_seconds = position_ms / 1000.0
 		self.timeline.update()
+		self.update_custom_ui()
+
+	def on_custom_mode_toggled(self, checked: bool) -> None:
+		self.timeline.custom_mode = checked
+		self.custom_length_input.setEnabled(checked)
+		self.btn_set_default.setEnabled(checked)
+		
+		# Disable/enable default slicing inputs based on custom mode
+		self.pieces_input.setEnabled(not checked)
+		self.segment_time_input.setEnabled(not checked)
+		self.slice_mode_switch.setEnabled(not checked)
+		
+		if checked:
+			self.timeline.generate_default_lengths()
+		
+		self.timeline.update()
+		self.update_custom_ui()
+
+	def on_custom_time_changed(self, time) -> None:
+		if not self.timeline.custom_mode or not self.timeline.custom_lengths:
+			return
+		
+		idx = self.timeline.get_active_index()
+		if idx >= 0 and idx < len(self.timeline.custom_lengths):
+			dur_s = time.hour() * 3600 + time.minute() * 60 + time.second()
+			
+			# Avoid an infinite loop of updating if the value hasn't really changed
+			if abs(self.timeline.custom_lengths[idx] - dur_s) > 0.5:
+				self.timeline.custom_lengths[idx] = dur_s
+				self.timeline.update()
+
+	def on_set_default_clicked(self) -> None:
+		if not self.timeline.custom_mode or not self.timeline.custom_lengths:
+			return
+			
+		idx = self.timeline.get_active_index()
+		if idx >= 0 and idx < len(self.timeline.custom_lengths):
+			self.timeline.custom_lengths[idx] = self.timeline.get_default_seg_s()
+			self.update_custom_ui()
+			self.timeline.update()
+
+	def update_custom_ui(self) -> None:
+		if not self.timeline.custom_mode or not self.timeline.custom_lengths:
+			return
+			
+		idx = self.timeline.get_active_index()
+		if idx >= 0 and idx < len(self.timeline.custom_lengths):
+			length_s = self.timeline.custom_lengths[idx]
+			
+			h = int(length_s // 3600)
+			m = int((length_s % 3600) // 60)
+			s = int(length_s % 60)
+			new_time = QTime(h, m, s)
+			
+			if self.custom_length_input.time() != new_time:
+				# Block signals to avoid triggering on_custom_time_changed
+				self.custom_length_input.blockSignals(True)
+				self.custom_length_input.setTime(new_time)
+				self.custom_length_input.blockSignals(False)
 
 	def on_duration_changed(self, duration_ms: int) -> None:
 		if duration_ms > 0:
 			self.timeline.video_duration_seconds = duration_ms / 1000.0
+			if self.timeline.custom_mode:
+				self.timeline.generate_default_lengths()
 			self.update_timeline()
 
 	def on_playback_state_changed(self, state) -> None:
@@ -472,8 +631,20 @@ class MainWindow(QMainWindow):
 			return 0, 0
 			
 		duration_s = duration_ms / 1000.0
-		# Přidáme malou toleranci (300ms) i sem, aby se kvůli I-FRAMEs neskočilo logicky o kus zpět
 		pos_s = (self.player.position() + 300) / 1000.0
+		
+		if self.timeline.custom_mode and self.timeline.custom_lengths:
+			current_start = 0
+			for i, length in enumerate(self.timeline.custom_lengths):
+				if pos_s >= current_start and pos_s < current_start + length:
+					return int(current_start * 1000), int(min((current_start + length) * 1000, duration_ms))
+				current_start += length
+			# Fallback if past end
+			if self.timeline.custom_lengths:
+				sum_len = sum(self.timeline.custom_lengths)
+				last_len = self.timeline.custom_lengths[-1]
+				return int((sum_len - last_len) * 1000), int(min(sum_len * 1000, duration_ms))
+			return 0, duration_ms
 		
 		is_time_mode = self.slice_mode_switch.isChecked()
 		if is_time_mode:
@@ -505,7 +676,7 @@ class MainWindow(QMainWindow):
 
 	def go_to_part_end(self) -> None:
 		start_ms, end_ms = self.get_current_part_bounds()
-		# O kousicek pred konec, aby hned neskocil na dalsi segment
+		# A bit before the end so it doesn't jump to the next segment directly
 		self.player.setPosition(max(start_ms, end_ms - 100))
 
 	def go_to_video_end(self) -> None:
@@ -548,48 +719,57 @@ class MainWindow(QMainWindow):
 			url = QUrl.fromLocalFile(file_path)
 			self.current_video_path = file_path
 			self.player.setSource(url)
-			self.player.pause() # Připravíme přehrávač (načte video), ale ihned ho pauzneme
+			self.player.pause() # Prepare the player (loads video) but instantly pause it
 			self.player.setPosition(0)
 
 	def export_file(self) -> None:
 		if not self.current_video_path or self.player.duration() <= 0:
-			QMessageBox.warning(self, "Chyba", "Nejprve otevřete video pro export.")
+			QMessageBox.warning(self, "Error", "Open a video to export first.")
 			return
 
-		file_path, _ = QFileDialog.getSaveFileName(self, "Uložit jako (Zvolte složku a předponu názvu bez přípony)", "", "All Files (*)")
+		file_path, _ = QFileDialog.getSaveFileName(self, "Save as (Choose folder and name prefix without extension)", "", "All Files (*)")
 		if not file_path:
 			return
 
 		duration_s = self.player.duration() / 1000.0
 		timestamps = []
 		
-		is_time_mode = self.slice_mode_switch.isChecked()
-		if is_time_mode:
-			t = self.segment_time_input.time()
-			seg_s = t.hour() * 3600 + t.minute() * 60 + t.second()
-			if seg_s > 0:
-				num_segments = int(duration_s / seg_s)
-				if duration_s % seg_s > 0.1:  # malý zbytek na konci
-					num_segments += 1
-				for i in range(num_segments):
-					start_s = i * seg_s
-					dur_s = min(seg_s, duration_s - start_s)
-					timestamps.append((start_s, dur_s, i + 1))
+		if self.timeline.custom_mode and self.timeline.custom_lengths:
+			current_start = 0
+			for i, length in enumerate(self.timeline.custom_lengths):
+				if current_start >= duration_s:
+					break
+				dur_s = min(length, duration_s - current_start)
+				timestamps.append((current_start, dur_s, i + 1))
+				current_start += dur_s
 		else:
-			pieces = self.pieces_input.value()
-			if pieces > 0:
-				seg_s = duration_s / pieces
-				for i in range(pieces):
-					start_s = i * seg_s
-					timestamps.append((start_s, seg_s, i + 1))
+			is_time_mode = self.slice_mode_switch.isChecked()
+			if is_time_mode:
+				t = self.segment_time_input.time()
+				seg_s = t.hour() * 3600 + t.minute() * 60 + t.second()
+				if seg_s > 0:
+					num_segments = int(duration_s / seg_s)
+					if duration_s % seg_s > 0.1:  # tiny remainder at the end
+						num_segments += 1
+					for i in range(num_segments):
+						start_s = i * seg_s
+						dur_s = min(seg_s, duration_s - start_s)
+						timestamps.append((start_s, dur_s, i + 1))
+			else:
+				pieces = self.pieces_input.value()
+				if pieces > 0:
+					seg_s = duration_s / pieces
+					for i in range(pieces):
+						start_s = i * seg_s
+						timestamps.append((start_s, seg_s, i + 1))
 
 		if not timestamps:
 			return
 
-		self.progress_dialog = QProgressDialog("Inicializace exportu...", "Zrušit", 0, len(timestamps), self)
-		self.progress_dialog.setWindowTitle("Probíhá export")
+		self.progress_dialog = QProgressDialog("Initializing export...", "Cancel", 0, len(timestamps), self)
+		self.progress_dialog.setWindowTitle("Export in progress")
 		self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-		# Rychlý export nedovolíme snadno zrušit, skryjeme tlačítko Zrušit
+		# Hide the cancel button during fast export
 		self.progress_dialog.setCancelButton(None) 
 		self.progress_dialog.show()
 
@@ -604,9 +784,9 @@ class MainWindow(QMainWindow):
 			self.progress_dialog.close()
 			
 		if success:
-			QMessageBox.information(self, "Dokončeno", message)
+			QMessageBox.information(self, "Completed", message)
 		else:
-			QMessageBox.critical(self, "Chyba", message)
+			QMessageBox.critical(self, "Error", message)
 
 	def open_settings_window(self) -> None:
 		dialog = SettingsDialog(self)
@@ -615,9 +795,20 @@ class MainWindow(QMainWindow):
 			self.update_timeline()
 
 
+def resource_path(relative_path):
+	""" Get absolute path to resource, works for dev and for PyInstaller """
+	try:
+		# PyInstaller creates a temp folder and stores path in _MEIPASS
+		base_path = sys._MEIPASS
+	except Exception:
+		base_path = os.path.dirname(os.path.abspath(__file__))
+	return os.path.join(base_path, relative_path)
+
 def main() -> None:
 	app = QApplication(sys.argv)
+	app.setWindowIcon(QIcon(resource_path("icon.png")))
 	window = MainWindow()
+	window.setWindowIcon(QIcon(resource_path("icon.png")))
 	window.show()
 	sys.exit(app.exec())
 
