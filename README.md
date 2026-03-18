@@ -35,4 +35,4 @@ python build.py
 ```
 
 On Linux, it creates a single binary in `dist/VideoSlicer`.
-On Windows, it creates a folder distribution in `dist/VideoSlicer/VideoSlicer.exe`.
+On Windows, it creates a single executable file in `dist/VideoSlicer.exe`.
