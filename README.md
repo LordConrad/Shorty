@@ -13,6 +13,7 @@ Shorty (VideoSLicer) is a simple GUI app for splitting video files. You can spli
 - **FFmpeg** for the actual video splitting (make sure you have [FFmpeg](https://www.ffmpeg.org/download.html) installed and in your system PATH).
 - **PyInstaller** for building executables.
 
+<<<<<<< HEAD
 
 # Install dependencies
 pip install -r requirements.txt
@@ -21,6 +22,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+=======
+>>>>>>> cf3f52964f9cfde133e2a033323ae890c2a4a438
 ## Building
 You can build a standalone executable using the provided script. Make sure your virtual environment is active.
 
