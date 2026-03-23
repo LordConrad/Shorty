@@ -4,7 +4,7 @@ import sys
 # Definice společných parametrů pro PyInstaller pro obě platformy
 common_args = [
     'main.py',
-    '--name=VideoSlicer',
+    '--name=Shorty',
     '--windowed',                  # Vypne konzolové okno aplikace za chodem (Důležité pro GUI Qt)
     '--noconfirm',                 # Při sestavování rovnou potvrdí přepsání minulé verze
     '--clean',
@@ -33,3 +33,4 @@ elif sys.platform.startswith('win'):
     
 else:
     print(f"Nepodporovaný systém pro automatický build: {sys.platform}")
+ 

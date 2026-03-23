@@ -1,6 +1,6 @@
-# VideoSlicer
+# Shorty
 
-VideoSlicer is a simple GUI app for splitting video files. You can split videos either by a specific duration or into a set number of parts.
+Shorty (VideoSLicer) is a simple GUI app for splitting video files. You can split videos either by a specific duration or into a set number of parts.
 
 ## Features
 - **Fast splitting:** Uses `ffmpeg -c copy` so videos are split quickly without re-encoding.
@@ -10,20 +10,14 @@ VideoSlicer is a simple GUI app for splitting video files. You can split videos 
 
 ## Made with
 - **Python** with **PySide6** for the UI.
-- **FFmpeg** for the actual video splitting (make sure you have `ffmpeg` installed and in your system PATH).
+- **FFmpeg** for the actual video splitting (make sure you have [FFmpeg](https://www.ffmpeg.org/download.html) installed and in your system PATH).
 - **PyInstaller** for building executables.
 
-## Running from source
-```bash
-# 1. Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Linux/macOS
-# .\venv\Scripts\activate   # On Windows
 
-# 2. Install dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# 3. Run the app
+# Run the app
 python main.py
 ```
 
